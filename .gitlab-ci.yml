@@ -1,0 +1,54 @@
+
+variables:
+  GIT_URL: "git.gmantaos.com"
+
+stages:
+  - test
+  - deploy
+
+test:
+  image: gmantaos/golang-dep-arm
+  stage: test
+  tags:
+  - docker
+  script:
+  # Prepare workspace
+  - apk add git git-lfs --update-cache --repository http://dl-3.alpinelinux.org/alpine/edge/testing/ || true
+  - git lfs pull
+  - rm .git/hooks/post-checkout || true
+  - mkdir -p "${GOPATH}/src/${GIT_URL}/${CI_PROJECT_NAMESPACE}"
+  - rm -rf "${GOPATH}/src/${GIT_URL}/${CI_PROJECT_PATH}" || true
+  - ln -s "${CI_PROJECT_DIR}" "${GOPATH}/src/${GIT_URL}/${CI_PROJECT_PATH}"
+  - cd "${GOPATH}/src/${GIT_URL}/${CI_PROJECT_PATH}"
+  - go get -u github.com/golang/lint/golint
+  - dep ensure
+  # Run tests and linting
+  - golint -set_exit_status
+  - go fmt
+  - go vet -composites=false
+  - go test -covermode=count -coverprofile test_coverage.cov
+  - go tool cover -html=test_coverage.cov -o test_coverage.html
+  - go tool cover -func=test_coverage.cov -o test_coverage.cov
+  - cat test_coverage.cov
+  artifacts:
+    name: test_coverage
+    paths:
+      - test_coverage.*
+    expire_in: 1 week
+
+deploy:
+  image: docker
+  stage: deploy
+  only:
+  - master
+  tags:
+  - raspi
+  environment:
+    name: iconlooter.gmantaos.com
+    url: https://iconlooter.gmantaos.com
+  script:
+  - apk add git git-lfs --update-cache --repository http://dl-3.alpinelinux.org/alpine/edge/testing/ || true
+  - git lfs pull
+  - docker build -t iconlooter .
+  - docker rm -f iconlooter || true
+  - docker run -d --restart always --name iconlooter -p 8081:80 --dns=8.8.8.8 iconlooter
